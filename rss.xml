@@ -1,0 +1,513 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"
+    xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <channel>
+        <title>René Tobner</title>
+        <link>https://salamynder.github.io</link>
+        <description><![CDATA[RSS feed for René Tobner's blog]]></description>
+        <atom:link href="https://salamynder.github.io/rss.xml" rel="self"
+                   type="application/rss+xml" />
+        <lastBuildDate>Sat, 07 Dec 2019 00:00:00 UT</lastBuildDate>
+        <item>
+    <title></title>
+    <link>https://salamynder.github.io/2019/12/07/js-async-compilation/</link>
+    <description><![CDATA[<div id="primary">
+    <div class="inside">
+        <h1 class="title">2019-12-07-js-async-compilation</h1>
+        <div class="opacity08"><small>
+                <i>December  7, 2019 / </i>
+        </small></div>
+        <br>
+        <h1 id="notes-on-js-async-operations">Notes on JS async operations</h1>
+<h2 id="tldr">tl;dr</h2>
+<p>Async/await works by making a generator check a promis for settlement (settle: Did the promise resolve to a value or reject with an error, yet?). (<a href="#gen-prom-check">gen-prom-check</a>)</p>
+<p>If targeting js-environments without native generator implementation,</p>
+<ul>
+<li>there is a <a href="https://www.npmjs.com/package/regenerator-runtime">generator runtime for async operations</a> by facebook. Async code needs to be transpiled via the <a href="https://github.com/facebook/regenerator">regenerator</a> library.</li>
+<li>TODO: this approach seems to be used with react-native (<a href="https://github.com/facebook/regenerator/issues/375">bug-breaking-react-native</a>)
+<ul>
+<li>Why used at all? More efficient than Promise-only translation, see below?</li>
+<li>related: <a href="https://github.com/babel/babel/issues/8121">async-to-promise-rather-than-async-to-generator</a></li>
+</ul></li>
+</ul>
+<p>However, async/await can also be transpiled to pure promises via `babel-plugin-async-to-promises`. (<a href="#promise-only">promise-only</a>)</p>
+<h2 id="intro">Intro</h2>
+<p>In languages which block script execution when IO-operations are being done, there is no problem to simply embed these operations in your method chains, like here in PHP where `doRequest` (1) is a method simulating a network request:</p>
+<h2 id="php-blocking">PHP-&gt;blocking</h2>
+<div class="sourceCode" id="cb1"><pre class="sourceCode php"><code class="sourceCode php"><a class="sourceLine" id="cb1-1" title="1"><span class="kw">$w</span> = <span class="kw">new</span> Work <span class="ot">(</span><span class="kw">$data</span><span class="ot">);</span></a>
+<a class="sourceLine" id="cb1-2" title="2"><span class="kw">$w</span>-&gt;selectSubset<span class="ot">(</span><span class="dv">0</span><span class="ot">)</span> <span class="co">//working on Mario</span></a>
+<a class="sourceLine" id="cb1-3" title="3">  -&gt;prepareQuery<span class="ot">()</span></a>
+<a class="sourceLine" id="cb1-4" title="4">  -&gt;doRequest<span class="ot">()</span>     <span class="co">// (1) sleeps a bit / blocks until execution is finished</span></a>
+<a class="sourceLine" id="cb1-5" title="5">  -&gt;logResult<span class="ot">()</span>     <span class="co">// next method can be called!</span></a>
+<a class="sourceLine" id="cb1-6" title="6">  -&gt;processResult<span class="ot">();</span></a></code></pre></div>
+<h2 id="js-asyncawait-non-blocking">JS: async/await, non-blocking</h2>
+<p>Doing the same in languages which by default do not block on IO, like javascript runtimes, was quite daunting until async/await keywords of ES7 (node v7.6.0) have arrived. (Before that you had to rely on passing callbacks to functions, or registering the callback via `Promise.then()`.) For example, a one-to-one naive translation of the PHP code above results in the following (Spoiler: which is not going to work, because `doRequest` is called without await operator…):</p>
+<div class="sourceCode" id="cb2" data-org-language="js"><pre class="sourceCode javascript"><code class="sourceCode javascript"><a class="sourceLine" id="cb2-1" title="1"><span class="kw">let</span> w <span class="op">=</span> <span class="kw">new</span> <span class="at">Work</span> (data)</a>
+<a class="sourceLine" id="cb2-2" title="2">    .<span class="at">selectSubset</span>(<span class="dv">0</span>)</a>
+<a class="sourceLine" id="cb2-3" title="3">    .<span class="at">prepareQuery</span>()</a>
+<a class="sourceLine" id="cb2-4" title="4">    .<span class="at">doRequest</span>()     <span class="co">// (1) is already async function, see below</span></a>
+<a class="sourceLine" id="cb2-5" title="5">    .<span class="at">logResult</span>()</a>
+<a class="sourceLine" id="cb2-6" title="6">    .<span class="at">processResult</span>()</a></code></pre></div>
+<p>Where `doRequest` looks like this:</p>
+<div class="sourceCode" id="cb3" data-org-language="js"><pre class="sourceCode javascript"><code class="sourceCode javascript"><a class="sourceLine" id="cb3-1" title="1"><span class="kw">class</span> Work</a>
+<a class="sourceLine" id="cb3-2" title="2">    [...]</a>
+<a class="sourceLine" id="cb3-3" title="3">    <span class="kw">async</span> <span class="at">doRequest</span>() <span class="op">{</span></a>
+<a class="sourceLine" id="cb3-4" title="4"></a>
+<a class="sourceLine" id="cb3-5" title="5">        <span class="kw">function</span> <span class="at">get</span>(uri)<span class="op">{</span></a>
+<a class="sourceLine" id="cb3-6" title="6">            <span class="cf">return</span> <span class="kw">new</span> <span class="at">Promise</span>((resolve<span class="op">,</span>reject) <span class="kw">=&gt;</span> <span class="op">{</span></a>
+<a class="sourceLine" id="cb3-7" title="7"></a>
+<a class="sourceLine" id="cb3-8" title="8">                <span class="at">setTimeout</span>(() <span class="kw">=&gt;</span> <span class="op">{</span></a>
+<a class="sourceLine" id="cb3-9" title="9">                    <span class="cf">if</span> (uri<span class="op">===</span><span class="st">'Mario'</span>)</a>
+<a class="sourceLine" id="cb3-10" title="10">                        <span class="at">resolve</span>(<span class="st">&quot;It'seh meeeh, Mario!&quot;</span>)</a>
+<a class="sourceLine" id="cb3-11" title="11">                    <span class="cf">else</span> </a>
+<a class="sourceLine" id="cb3-12" title="12">                        <span class="at">resolve</span>(<span class="st">&quot;Evil twin detected! )=D&quot;</span>)</a>
+<a class="sourceLine" id="cb3-13" title="13"></a>
+<a class="sourceLine" id="cb3-14" title="14">                <span class="op">},</span> <span class="dv">1000</span>)</a>
+<a class="sourceLine" id="cb3-15" title="15">            <span class="op">}</span>)</a>
+<a class="sourceLine" id="cb3-16" title="16">        <span class="op">}</span></a>
+<a class="sourceLine" id="cb3-17" title="17"></a>
+<a class="sourceLine" id="cb3-18" title="18">        <span class="va">console</span>.<span class="at">log</span>(<span class="vs">`:: Requesting &gt;</span><span class="sc">${</span><span class="kw">this</span>.<span class="at">uri</span><span class="sc">}</span><span class="vs">&lt;`</span>)</a>
+<a class="sourceLine" id="cb3-19" title="19"></a>
+<a class="sourceLine" id="cb3-20" title="20">        <span class="kw">let</span> res <span class="op">=</span> <span class="cf">await</span> <span class="at">get</span>(<span class="kw">this</span>.<span class="at">uri</span>)     <span class="co">// (2) wait</span></a>
+<a class="sourceLine" id="cb3-21" title="21">        <span class="kw">this</span>.<span class="at">res</span> <span class="op">=</span> res                    <span class="co">// (3) store in instance variable</span></a>
+<a class="sourceLine" id="cb3-22" title="22"></a>
+<a class="sourceLine" id="cb3-23" title="23">        <span class="co">// (4) log the result</span></a>
+<a class="sourceLine" id="cb3-24" title="24">        <span class="va">console</span>.<span class="at">log</span>(<span class="vs">`:: Response for &gt;</span><span class="sc">${</span><span class="kw">this</span>.<span class="at">uri</span><span class="sc">}</span><span class="vs">&lt; arrived: `</span><span class="op">,</span> <span class="kw">this</span>.<span class="at">res</span><span class="op">,</span> <span class="st">' (from doRequest() )'</span>)</a>
+<a class="sourceLine" id="cb3-25" title="25"></a>
+<a class="sourceLine" id="cb3-26" title="26">        <span class="cf">return</span> <span class="kw">this</span></a>
+<a class="sourceLine" id="cb3-27" title="27">    <span class="op">}</span></a>
+<a class="sourceLine" id="cb3-28" title="28">    [...]</a></code></pre></div>
+<p>So, this will not work out, because, as already stated, the default execution model is non-blocking (asynchronous) and this is not going to change.</p>
+<p>The output of the above code is the following, showing that the logging from `doRequest` ((4) above) comes much too late:</p>
+<pre class="example"><code>:: Requesting &gt;Mario&lt;
+:: query result:  null (from .logResult)
+:: merging query result with data....
+[ { user: 'Mario', verdict: null }, { user: 'Wario' } ]
+:: Done!
+====================
+
+:: Response for &gt;Mario&lt; arrived:  It'seh meeeh, Mario!  (from doRequest() )
+</code></pre>
+<p>Since all async functions implicitly return a Promise, the Promise is resolved eventually, but in the meantime the code after `doRequest` has already run.</p>
+<p>Now, async/await, as used in doRequest, gives the possibility to suspend the current function via `await` (2), but why is not working, yet?</p>
+<p><span id="async-context"></span></p>
+<p>The reason is that the JS runtime doesn’t know about the async nature of `doRequest`, when it is called as a regular function at the top-level of your module/script, and to make the async nature clear, `doRequest` has to be awaited for. Since `await` is only allowed<a href="#fn1" class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a> in functions declared async, we gonna wrap everything with some `async function` (1) and `await` (2) the async calls, as seen below:</p>
+<div class="sourceCode" id="cb5" data-org-language="js"><pre class="sourceCode javascript"><code class="sourceCode javascript"><a class="sourceLine" id="cb5-1" title="1"><span class="kw">async</span> <span class="kw">function</span> <span class="at">run</span> ()<span class="op">{</span>     <span class="co">// (1)</span></a>
+<a class="sourceLine" id="cb5-2" title="2"></a>
+<a class="sourceLine" id="cb5-3" title="3">    <span class="kw">let</span> w <span class="op">=</span> <span class="kw">new</span> <span class="at">Work</span> (data)</a>
+<a class="sourceLine" id="cb5-4" title="4"></a>
+<a class="sourceLine" id="cb5-5" title="5">    <span class="co">//working on Mario</span></a>
+<a class="sourceLine" id="cb5-6" title="6"></a>
+<a class="sourceLine" id="cb5-7" title="7">    <span class="va">w</span>.<span class="at">selectSubset</span>(<span class="dv">0</span>)</a>
+<a class="sourceLine" id="cb5-8" title="8">    <span class="va">w</span>.<span class="at">prepareQuery</span>()</a>
+<a class="sourceLine" id="cb5-9" title="9"></a>
+<a class="sourceLine" id="cb5-10" title="10">    <span class="cf">await</span> <span class="va">w</span>.<span class="at">doRequest</span>()    <span class="co">// (2) now it really waits</span></a>
+<a class="sourceLine" id="cb5-11" title="11"></a>
+<a class="sourceLine" id="cb5-12" title="12">    <span class="va">w</span>.<span class="at">logResult</span>()          <span class="co">// (3) can log the result of (2)</span></a>
+<a class="sourceLine" id="cb5-13" title="13">    <span class="va">w</span>.<span class="at">processResult</span>()</a>
+<a class="sourceLine" id="cb5-14" title="14"><span class="op">}</span></a>
+<a class="sourceLine" id="cb5-15" title="15"></a>
+<a class="sourceLine" id="cb5-16" title="16"><span class="at">run</span>()</a></code></pre></div>
+<p>So, sadly the method chain is broken up but it works as intended … AND since `await` only suspends the `run` function, node/javascript can still do other things in between, for example updating a counter via:</p>
+<div class="sourceCode" id="cb6" data-org-language="js"><pre class="sourceCode javascript"><code class="sourceCode javascript"><a class="sourceLine" id="cb6-1" title="1"><span class="co">// [... same as before]</span></a>
+<a class="sourceLine" id="cb6-2" title="2"><span class="kw">let</span> cnt <span class="op">=</span> <span class="dv">1</span></a>
+<a class="sourceLine" id="cb6-3" title="3"><span class="kw">let</span> i <span class="op">=</span> <span class="at">setInterval</span>(() <span class="kw">=&gt;</span> <span class="op">{</span></a>
+<a class="sourceLine" id="cb6-4" title="4">    <span class="cf">if</span>(cnt <span class="op">===</span> <span class="dv">15</span>)</a>
+<a class="sourceLine" id="cb6-5" title="5">        <span class="at">clearInterval</span>(i)</a>
+<a class="sourceLine" id="cb6-6" title="6">    <span class="va">console</span>.<span class="at">log</span>(<span class="st">&quot;++ working on counter :&quot;</span><span class="op">,</span>cnt<span class="op">++</span>)</a>
+<a class="sourceLine" id="cb6-7" title="7"><span class="op">},</span> <span class="dv">100</span>)</a>
+<a class="sourceLine" id="cb6-8" title="8"></a>
+<a class="sourceLine" id="cb6-9" title="9"><span class="at">run</span>()</a></code></pre></div>
+<p>will yield:</p>
+<pre class="example"><code>:: input data: 
+ [ { user: 'Mario' }, { user: 'Wario' } ]
+:: Requesting &gt;Mario&lt;                                     (1)
+++ working on counter : 1
+++ working on counter : 2
+++ working on counter : 3
+++ working on counter : 4
+++ working on counter : 5
+++ working on counter : 6
+++ working on counter : 7
+++ working on counter : 8
+++ working on counter : 9
+:: Response for &gt;Mario&lt; arrived:  It'seh meeeh, Mario!    (2)
+:: query result:  It'seh meeeh, Mario! (from .logResult)
+:: merging query result with data....
+[ { user: 'Mario', verdict: 'It\'seh meeeh, Mario!' },
+  { user: 'Wario' } ]
+:: Done!
+====================
+</code></pre>
+<p>As one can see, after making the request (1) node can do some other work, our code seems to be suspended, awaiting the response, until finally (2) the response is logged from `doRequest` and one line later from the `logResult` method and so on. Therefore we have a means to write synchronous looking code, while the efficiency of node’s default asynchronous, non-blocking execution model is preserved.</p>
+<p><span id="gen-prom-check"></span></p>
+<h2 id="generators-and-promises-as-aequivalence-of-asyncawait">Generators and Promises as aequivalence of async/await</h2>
+<p>Since babel transpiles async/await code to generators which are specialized to yield promises, as you can see here:</p>
+<ul>
+<li><a href="https://babeljs.io/repl/#?babili%3Dfalse&amp;browsers%3D&amp;build%3D&amp;builtIns%3Dfalse&amp;spec%3Dfalse&amp;loose%3Dfalse&amp;code_lz%3DIYZwngdgxgBAZgV2gFwJYHsIwDboOYBiApslABYAUCATtgJQwDeAUDDMtWE62zFJiGQxqREAAcBRGAF4YwAO7BUQuCXJVadANw82_CCHTYiAOlx4KCpUJHjJJ5EQAeyCnW08AvjyjBSZGAoiamoGFl4-ASNTcwoAclV_eCVjABM4gBoYYNCdNm9PIA&amp;debug%3Dfalse&amp;forceAllTransforms%3Dfalse&amp;shippedProposals%3Dfalse&amp;circleciRepo%3D&amp;evaluate%3Dtrue&amp;fileSize%3Dfalse&amp;timeTravel%3Dfalse&amp;sourceType%3Dmodule&amp;lineWrap%3Dfalse&amp;presets%3Des2017&amp;prettier%3Dfalse&amp;targets%3D&amp;version%3D7.7.4&amp;externalPlugins%3D">async-await-2-gen-promise</a></li>
+</ul>
+<p>the two constructs are at least equivalent. See <a href="https://github.com/salamynder/simple-async-data-pipeline/blob/289b5dd/async-to-generator.js">this file</a> in my repo for elucidating logging.</p>
+<p>Another article dealing with the aequivalence:</p>
+<dl>
+<dt>simple async implementation using generators and promises</dt>
+<dd><a href="https://hackernoon.com/async-await-generators-promises-51f1a6ceede2">hackernoon/async-await-generators-promises</a>
+</dd>
+</dl>
+<p>Also, async/await should be internally implemented using generators, as hinted at here: <a href="https://exploringjs.com/es6/ch_generators.html#sec_overview-generators">exploringjs/generators-overview</a> (“ECMAScript 2017 will have async functions which are internally based on generators.”)</p>
+<h3 id="implementation-of-generators-and-asyncawait-in-v8"><span class="todo TODO">TODO</span> Implementation of generators and async/await in V8?</h3>
+<h2 id="generators-semi-coroutines-shallow-coroutines">Generators = semi-coroutines, shallow coroutines</h2>
+<h3 id="coroutines-wikicoroutine">Coroutines? (<a href="https://en.wikipedia.org/wiki/Coroutine">Wiki/Coroutine</a>)</h3>
+<ul>
+<li>“allowing execution to be suspended and resumed”
+<ul>
+<li>= they have some sort `yield` mechanism</li>
+</ul></li>
+<li>“generalize subroutines”
+<ul>
+<li>= any coroutine can be converted into a subroutine by not calling `yield`</li>
+</ul></li>
+<li>“for non-preemptive multitasking”
+<ul>
+<li>= cooperative multitasking: “a style of computer multitasking in which the operating system never initiates a context switch from a running process to another process. Instead, processes voluntarily <strong>yield</strong> control […]” (my emphasis, see <a href="https://en.wikipedia.org/wiki/Cooperative_multitasking">Wiki/CoopMultitasking</a>)</li>
+</ul></li>
+</ul>
+<h3 id="generators-vs.-coroutines-fibers">Generators vs. Coroutines (fibers)</h3>
+<p>From <a href="https://github.com/yortus/asyncawait/issues/51">https://github.com/yortus/asyncawait/issues/51</a> (asyncawait is a node.js package using node-fibers; fibers are a system level construct, namely cooperrative threads, which is <strong>equivalent</strong> to the language level construct of coroutines):</p>
+<p>“Fibers and <strong>coroutines</strong> support deep continuations. This means that you can yield at any depth in the call stack and resume there later.”</p>
+<p>Example from the same thread:</p>
+<div class="sourceCode" id="cb8" data-org-language="js"><pre class="sourceCode javascript"><code class="sourceCode javascript"><a class="sourceLine" id="cb8-1" title="1"><span class="kw">let</span> testFn <span class="op">=</span> <span class="kw">async</span> (() <span class="kw">=&gt;</span> <span class="op">{</span></a>
+<a class="sourceLine" id="cb8-2" title="2"></a>
+<a class="sourceLine" id="cb8-3" title="3">    someArray <span class="op">=</span> [...]<span class="op">;</span></a>
+<a class="sourceLine" id="cb8-4" title="4"></a>
+<a class="sourceLine" id="cb8-5" title="5">    <span class="kw">let</span> results <span class="op">=</span> someArray</a>
+<a class="sourceLine" id="cb8-6" title="6">        .<span class="at">filter</span>(el <span class="kw">=&gt;</span> <span class="cf">await</span> (<span class="at">someAsyncTest</span>())   <span class="co">// (1)</span></a>
+<a class="sourceLine" id="cb8-7" title="7">        .<span class="at">map</span>(el <span class="kw">=&gt;</span> <span class="cf">await</span> (<span class="at">someAsyncMapping</span>())<span class="op">;</span>  <span class="co">// (2)</span></a>
+<a class="sourceLine" id="cb8-8" title="8"></a>
+<a class="sourceLine" id="cb8-9" title="9">    <span class="cf">return</span> results<span class="op">;</span></a>
+<a class="sourceLine" id="cb8-10" title="10"><span class="op">}</span>)<span class="op">;</span></a></code></pre></div>
+<p>With the package `asyncawait`, it is unnecessary to give filter or map (1,2) an `async` callback. To achieve the same with regular async/await, you’d have to sprinkle a lot more async/await operators and use `Promise.all`:</p>
+<div class="sourceCode" id="cb9" data-org-language="js"><pre class="sourceCode javascript"><code class="sourceCode javascript"><a class="sourceLine" id="cb9-1" title="1"><span class="kw">let</span> testFn <span class="op">=</span> <span class="kw">async</span> () <span class="kw">=&gt;</span> <span class="op">{</span></a>
+<a class="sourceLine" id="cb9-2" title="2"></a>
+<a class="sourceLine" id="cb9-3" title="3">    <span class="kw">let</span> someArray <span class="op">=</span> [<span class="dv">1</span><span class="op">,</span><span class="dv">2</span><span class="op">,</span><span class="dv">3</span><span class="op">,</span><span class="dv">4</span>]</a>
+<a class="sourceLine" id="cb9-4" title="4"></a>
+<a class="sourceLine" id="cb9-5" title="5">    <span class="kw">let</span> results <span class="op">=</span> <span class="cf">await</span> <span class="va">Promise</span>.<span class="at">all</span> (</a>
+<a class="sourceLine" id="cb9-6" title="6">        someArray</a>
+<a class="sourceLine" id="cb9-7" title="7">            .<span class="at">map</span>(<span class="kw">async</span> el <span class="kw">=&gt;</span> <span class="cf">await</span> el <span class="op">+</span> <span class="dv">1</span>)</a>
+<a class="sourceLine" id="cb9-8" title="8">    )</a>
+<a class="sourceLine" id="cb9-9" title="9"></a>
+<a class="sourceLine" id="cb9-10" title="10">    <span class="cf">return</span> results<span class="op">;</span></a>
+<a class="sourceLine" id="cb9-11" title="11"><span class="op">};</span></a>
+<a class="sourceLine" id="cb9-12" title="12"></a>
+<a class="sourceLine" id="cb9-13" title="13"><span class="kw">async</span> <span class="kw">function</span> <span class="at">run</span> ()<span class="op">{</span></a>
+<a class="sourceLine" id="cb9-14" title="14"></a>
+<a class="sourceLine" id="cb9-15" title="15">    <span class="kw">let</span> res <span class="op">=</span> <span class="cf">await</span> <span class="at">testFn</span>()</a>
+<a class="sourceLine" id="cb9-16" title="16">    <span class="va">console</span>.<span class="at">log</span>(res)</a>
+<a class="sourceLine" id="cb9-17" title="17"><span class="op">}</span></a>
+<a class="sourceLine" id="cb9-18" title="18"></a>
+<a class="sourceLine" id="cb9-19" title="19"><span class="at">run</span>() <span class="co">// -&gt; [2,3,4,5]</span></a></code></pre></div>
+<p>“Generators only support single frame continuations. This means that yielding only saves 1 stack frame. This is less powerful and it explains why you need to yield (or await) at all levels when you use generators (or ES7 async/await) to streamline async call graphs.” (again <a href="https://github.com/yortus/asyncawait/issues/51">https://github.com/yortus/asyncawait/issues/51</a> )</p>
+<p>This explains the top-level-await for my `doRequest` above (and the async-function-wrapper). Generators are simply not powerful enough, and this seems to be quite reasonable for running in your browser tab (while node-fibers is still very active!)</p>
+<p>Related discussion:</p>
+<dl>
+<dt><a href="https://exploringjs.com/es6/ch_generators.html#sec_generators-are-shallow">exploringJS-shallow-generators</a></dt>
+<dd>but preserving run-to-completion
+</dd>
+<dt><a href="http://calculist.org/blog/2011/12/14/why-coroutines-wont-work-on-the-web/">why-coroutines-wont-work-on-the-web</a></dt>
+<dd>“coroutines no, generators yes”
+</dd>
+</dl>
+<h2 id="promise-translation-of-asyncawait-actions">Promise translation of async/await actions</h2>
+<div class="sourceCode" id="cb10" data-org-language="js"><pre class="sourceCode javascript"><code class="sourceCode javascript"><a class="sourceLine" id="cb10-1" title="1"><span class="kw">let</span> w <span class="op">=</span> <span class="kw">new</span> <span class="at">Work</span>(data)<span class="op">;</span></a>
+<a class="sourceLine" id="cb10-2" title="2"></a>
+<a class="sourceLine" id="cb10-3" title="3"><span class="kw">function</span> <span class="at">run</span>(w) <span class="op">{</span></a>
+<a class="sourceLine" id="cb10-4" title="4">  <span class="cf">return</span> <span class="va">Promise</span>.<span class="at">resolve</span>().<span class="at">then</span>(<span class="kw">function</span> () <span class="op">{</span></a>
+<a class="sourceLine" id="cb10-5" title="5">    <span class="co">//working on Mario</span></a>
+<a class="sourceLine" id="cb10-6" title="6">    <span class="va">w</span>.<span class="at">selectSubset</span>(<span class="dv">0</span>)<span class="op">;</span></a>
+<a class="sourceLine" id="cb10-7" title="7">    <span class="va">w</span>.<span class="at">prepareQuery</span>()<span class="op">;</span></a>
+<a class="sourceLine" id="cb10-8" title="8">    <span class="cf">return</span> <span class="va">w</span>.<span class="at">doRequest</span>()<span class="op">;</span></a>
+<a class="sourceLine" id="cb10-9" title="9">  <span class="op">}</span>).<span class="at">then</span>(<span class="kw">function</span> () <span class="op">{</span></a>
+<a class="sourceLine" id="cb10-10" title="10">    <span class="va">w</span>.<span class="at">logResult</span>()<span class="op">;</span></a>
+<a class="sourceLine" id="cb10-11" title="11">    <span class="va">w</span>.<span class="at">processResult</span>()<span class="op">;</span></a>
+<a class="sourceLine" id="cb10-12" title="12"></a>
+<a class="sourceLine" id="cb10-13" title="13">    <span class="co">//--------------------</span></a>
+<a class="sourceLine" id="cb10-14" title="14">    <span class="co">// working on Wario</span></a>
+<a class="sourceLine" id="cb10-15" title="15"></a>
+<a class="sourceLine" id="cb10-16" title="16">    <span class="va">w</span>.<span class="at">selectSubset</span>(<span class="dv">1</span>)<span class="op">;</span></a>
+<a class="sourceLine" id="cb10-17" title="17">    <span class="va">w</span>.<span class="at">prepareQuery</span>()<span class="op">;</span></a>
+<a class="sourceLine" id="cb10-18" title="18">    <span class="cf">return</span> <span class="va">w</span>.<span class="at">doRequest</span>()<span class="op">;</span></a>
+<a class="sourceLine" id="cb10-19" title="19">  <span class="op">}</span>).<span class="at">then</span>(<span class="kw">function</span> () <span class="op">{</span></a>
+<a class="sourceLine" id="cb10-20" title="20">    <span class="va">w</span>.<span class="at">logResult</span>()<span class="op">;</span></a>
+<a class="sourceLine" id="cb10-21" title="21">    <span class="va">w</span>.<span class="at">processResult</span>()<span class="op">;</span></a>
+<a class="sourceLine" id="cb10-22" title="22">  <span class="op">}</span>)<span class="op">;</span></a>
+<a class="sourceLine" id="cb10-23" title="23"><span class="op">}</span></a>
+<a class="sourceLine" id="cb10-24" title="24"></a>
+<a class="sourceLine" id="cb10-25" title="25"><span class="at">run</span>(w)<span class="op">;</span></a></code></pre></div>
+<section class="footnotes" role="doc-endnotes">
+<hr />
+<ol>
+<li id="fn1" role="doc-endnote"><p>The `async function` context is needed as long as there is no top-level `await`, which is only available in EcmaScript Modules, i.e.modules with .mjs extension and nodejs-command line flag: `–experimental-modules` (or try: –js-flags=“–harmony-top-level-await” ?), but this didn’t work for me under node v12.13.0 . However, the support for top-level-await is definitly available in the latest version of v8: <a href="https://v8.dev/features/top-level-await">https://v8.dev/features/top-level-await</a>.]</p>
+<p><span id="promise-only"></span><a href="#fnref1" class="footnote-back" role="doc-backlink">↩</a></p></li>
+</ol>
+</section>
+    </div>
+</div>
+]]></description>
+    <pubDate>Sat, 07 Dec 2019 00:00:00 UT</pubDate>
+    <guid>https://salamynder.github.io/2019/12/07/js-async-compilation/</guid>
+    <dc:creator>René Tobner</dc:creator>
+</item>
+<item>
+    <title></title>
+    <link>https://salamynder.github.io/2019/11/16/nodejs-simple-data-pipeline-with-async-call/</link>
+    <description><![CDATA[<div id="primary">
+    <div class="inside">
+        <h1 class="title">2019-11-16-nodejs-simple-data-pipeline-with-async-call</h1>
+        <div class="opacity08"><small>
+                <i>November 16, 2019 / </i>
+        </small></div>
+        <br>
+        <h1 id="simple-data-pipeline-with-intermediate-async-call">Simple data pipeline with intermediate async call</h1>
+<h2 id="tldr">tl;dr</h2>
+<p>Method chaining of async methods in Javascript (non-blocking execution model) is rather involved, either</p>
+<ul>
+<li>you go full circle and wrap everything in `Promise.then` (<a href="http://blog.minimum.se/2017/07/18/fluent-chained-api-asynchronous-functions-async-methods-Javascript.html">minimum.se/fluent-chained-async-api</a>),</li>
+<li>or deal with `.then` at some point in your chain (<a href="https://stackoverflow.com/questions/39028882/chaining-async-method-calls-javascript?noredirect%3D1&amp;lq%3D1">so/chaining-async-method-calls-js</a>)</li>
+</ul>
+<p>On the other hand – without chaining – you may just `await` the async actions inside an `async` function wrapper (<a href="#async-context">async-context</a>).</p>
+<h2 id="javascript-async-methods">Javascript async methods</h2>
+<p>In order to grasp – a little better – the non-blocking execution model of Javascript in node.js or in the browser, I felt compelled to come up with a small example. When learning asynchronous operations in js, I found a lot material showing short snippets of nested async calls with some processing of the responses. Here is an example in context where:</p>
+<ol>
+<li>some data is fed to an object instance</li>
+<li>methods of the object then:
+<ol>
+<li>select a subset of the data</li>
+<li>from which is build up a query string</li>
+<li>which is executed via async request</li>
+<li>The result of the query (which of course needs to be waited for) is <strong>stored in a property</strong> of the object <strong>for further processing</strong>.</li>
+</ol></li>
+</ol>
+<p>For this quite mundane a task I struggled far too long with the last step described above when executing the following code:</p>
+<div class="sourceCode" id="cb1" data-org-language="js"><pre class="sourceCode javascript"><code class="sourceCode javascript"><a class="sourceLine" id="cb1-1" title="1"><span class="kw">let</span> w <span class="op">=</span> <span class="kw">new</span> <span class="at">Work</span> (data)</a>
+<a class="sourceLine" id="cb1-2" title="2"></a>
+<a class="sourceLine" id="cb1-3" title="3"><span class="va">w</span>.<span class="at">selectSubset</span>(<span class="dv">0</span>)</a>
+<a class="sourceLine" id="cb1-4" title="4"><span class="va">w</span>.<span class="at">prepareQuery</span>()</a>
+<a class="sourceLine" id="cb1-5" title="5"></a>
+<a class="sourceLine" id="cb1-6" title="6"><span class="va">w</span>.<span class="at">doRequest</span>() <span class="co">// (1) async method storing the response in `w.res`</span></a>
+<a class="sourceLine" id="cb1-7" title="7"></a>
+<a class="sourceLine" id="cb1-8" title="8"><span class="va">w</span>.<span class="at">logResult</span>() <span class="co">// (2) tries to log `w.res`, but =&gt; &quot;query result: null&quot;</span></a></code></pre></div>
+<pre class="example"><code>:: input data: 
+ [ { user: 'Mario' }, { user: 'Wario' } ]
+:: Requesting &gt;Mario&lt;
+:: Requesting &gt;Mario&lt; (from Promise)
+:: query result:  null (from .logResult)           // NULL!
+:: merging query result with data....
+[ { user: 'Mario', verdict: null }, { user: 'Wario' } ]
+:: Done!
+====================
+
+:: Response for &gt;Mario&lt; arrived:  It'seh meeeh, Mario! // TOO LATE!
+</code></pre>
+<p>In particular, I was puzzled why my `doRequest` method (1) couldn’t store its result in the object property in time, so it couldn’t be accessed in `logResult` (2) via `w.res`/`this.res`:</p>
+<div class="sourceCode" id="cb3" data-org-language="js"><pre class="sourceCode javascript"><code class="sourceCode javascript"><a class="sourceLine" id="cb3-1" title="1"><span class="kw">class</span> Work <span class="op">{</span></a>
+<a class="sourceLine" id="cb3-2" title="2"></a>
+<a class="sourceLine" id="cb3-3" title="3">    <span class="at">constructor</span>(data)<span class="op">{</span></a>
+<a class="sourceLine" id="cb3-4" title="4"></a>
+<a class="sourceLine" id="cb3-5" title="5">        <span class="kw">this</span>.<span class="at">data</span> <span class="op">=</span> data</a>
+<a class="sourceLine" id="cb3-6" title="6">        <span class="kw">this</span>.<span class="at">res</span>  <span class="op">=</span> <span class="kw">null</span>       <span class="co">// (1) property for async request result</span></a>
+<a class="sourceLine" id="cb3-7" title="7">        <span class="kw">this</span>.<span class="at">uri</span>  <span class="op">=</span> <span class="kw">null</span>       </a>
+<a class="sourceLine" id="cb3-8" title="8">    <span class="op">}</span></a>
+<a class="sourceLine" id="cb3-9" title="9"></a>
+<a class="sourceLine" id="cb3-10" title="10">    [...] <span class="co">// omitting methods: selectSubset, prepareQuery (fills `this.uri`)</span></a>
+<a class="sourceLine" id="cb3-11" title="11"></a>
+<a class="sourceLine" id="cb3-12" title="12">    <span class="kw">async</span> <span class="at">doRequest</span>() <span class="op">{</span></a>
+<a class="sourceLine" id="cb3-13" title="13"></a>
+<a class="sourceLine" id="cb3-14" title="14">        <span class="kw">function</span> <span class="at">get</span>(uri)<span class="op">{</span></a>
+<a class="sourceLine" id="cb3-15" title="15">            <span class="cf">return</span> <span class="kw">new</span> <span class="at">Promise</span>((resolve<span class="op">,</span>reject) <span class="kw">=&gt;</span> <span class="op">{</span></a>
+<a class="sourceLine" id="cb3-16" title="16"></a>
+<a class="sourceLine" id="cb3-17" title="17">                <span class="at">setTimeout</span>(() <span class="kw">=&gt;</span> <span class="op">{</span></a>
+<a class="sourceLine" id="cb3-18" title="18">                    <span class="cf">if</span> (uri<span class="op">===</span><span class="st">'Mario'</span>)</a>
+<a class="sourceLine" id="cb3-19" title="19">                        <span class="at">resolve</span>(<span class="st">&quot;It'seh meeeh, Mario!&quot;</span>)</a>
+<a class="sourceLine" id="cb3-20" title="20">                    <span class="cf">else</span> </a>
+<a class="sourceLine" id="cb3-21" title="21">                        <span class="at">resolve</span>(<span class="st">&quot;Evil twin detected! )=D&quot;</span>)</a>
+<a class="sourceLine" id="cb3-22" title="22"></a>
+<a class="sourceLine" id="cb3-23" title="23">                <span class="op">},</span> <span class="dv">1000</span>)</a>
+<a class="sourceLine" id="cb3-24" title="24">            <span class="op">}</span>)</a>
+<a class="sourceLine" id="cb3-25" title="25">        <span class="op">}</span></a>
+<a class="sourceLine" id="cb3-26" title="26"></a>
+<a class="sourceLine" id="cb3-27" title="27">        <span class="kw">let</span> res <span class="op">=</span> <span class="cf">await</span> <span class="at">get</span>(<span class="kw">this</span>.<span class="at">uri</span>) <span class="co">// (2) wait</span></a>
+<a class="sourceLine" id="cb3-28" title="28">        <span class="kw">this</span>.<span class="at">res</span> <span class="op">=</span> res                <span class="co">// (3) store</span></a>
+<a class="sourceLine" id="cb3-29" title="29"></a>
+<a class="sourceLine" id="cb3-30" title="30">        <span class="cf">return</span> <span class="kw">this</span></a>
+<a class="sourceLine" id="cb3-31" title="31">    <span class="op">}</span></a>
+<a class="sourceLine" id="cb3-32" title="32"></a>
+<a class="sourceLine" id="cb3-33" title="33">    <span class="at">logResult</span> () <span class="op">{</span></a>
+<a class="sourceLine" id="cb3-34" title="34">        <span class="va">console</span>.<span class="at">log</span>(<span class="st">&quot;:: query result: &quot;</span><span class="op">+</span><span class="kw">this</span>.<span class="at">res</span>) <span class="co">// (4) should log: &quot;It'seh meeeh, Mario!&quot;</span></a>
+<a class="sourceLine" id="cb3-35" title="35">        <span class="cf">return</span> <span class="kw">this</span></a>
+<a class="sourceLine" id="cb3-36" title="36">    <span class="op">}</span></a></code></pre></div>
+<p>When experimenting with this, I didn’t know too much about the async/await semantics (was only working with pure `Promise.then` before). I knew async functions always implictly wrap their return value in a promise, but how to deal with this at the call site, especially with class context (and loosing the same, because now I have to deal with `Promise.then` instead of my method chain was frustrating). Dabbling around with code like the following worked out:</p>
+<div class="sourceCode" id="cb4" data-org-language="js"><pre class="sourceCode javascript"><code class="sourceCode javascript"><a class="sourceLine" id="cb4-1" title="1"><span class="kw">let</span> t <span class="op">=</span> <span class="kw">new</span> <span class="at">Work</span>(data)</a>
+<a class="sourceLine" id="cb4-2" title="2">    .<span class="at">selectSubset</span>(<span class="dv">0</span>) <span class="co">// select `Mario` for query</span></a>
+<a class="sourceLine" id="cb4-3" title="3">    .<span class="at">prepareQuery</span>()</a>
+<a class="sourceLine" id="cb4-4" title="4">    .<span class="at">doRequest</span>() <span class="co">// :: Promise { t }</span></a>
+<a class="sourceLine" id="cb4-5" title="5">    .<span class="at">then</span>(t <span class="kw">=&gt;</span> <span class="op">{</span></a>
+<a class="sourceLine" id="cb4-6" title="6">        <span class="va">t</span>.<span class="at">logResult</span>()</a>
+<a class="sourceLine" id="cb4-7" title="7"></a>
+<a class="sourceLine" id="cb4-8" title="8">        <span class="co">// t.selectSubset(1) // select `Wario` for query</span></a>
+<a class="sourceLine" id="cb4-9" title="9">        <span class="co">// t.prepareQuery()</span></a>
+<a class="sourceLine" id="cb4-10" title="10">        <span class="co">// t.doRequest()</span></a>
+<a class="sourceLine" id="cb4-11" title="11">        <span class="co">//     .then(t =&gt; {</span></a>
+<a class="sourceLine" id="cb4-12" title="12">        <span class="co">//         t.logResult()</span></a>
+<a class="sourceLine" id="cb4-13" title="13">        <span class="co">//     })</span></a>
+<a class="sourceLine" id="cb4-14" title="14">    <span class="op">}</span>)</a></code></pre></div>
+<p>(To keep the identation flat, though, see last section <a href="#promise-no-nest">promise-no-nest</a>.)</p>
+<pre class="example"><code>:: input data: 
+ [ { user: 'Mario' }, { user: 'Wario' } ]
+:: Requesting &gt;Mario&lt;
+:: Requesting &gt;Mario&lt; (from Promise)
+:: Response for &gt;Mario&lt; arrived:  It'seh meeeh, Mario!   // RIGHT IN TIME!
+:: query result:  It'seh meeeh, Mario! (from .logResult)
+:: merging query result with data....
+[
+  { user: 'Mario', verdict: &quot;It'seh meeeh, Mario!&quot; },
+  { user: 'Wario' }
+]
+:: Done!
+====================
+</code></pre>
+<p>… but in the end not overly pleasant because of the `.then`, resulting in one level of indendation every time I do a `.doRequest`.</p>
+<p><span id="async-context"></span></p>
+<h2 id="top-level-async-context">Top-level async context</h2>
+<p>So, how do we get both right: a working program and visual appeal by somehow omitting the then-indenting-hell? Turns out that all I needed to do, was to wrap the call site code an async function and `await` the `.doRequest`:</p>
+<div class="sourceCode" id="cb6" data-org-language="js"><pre class="sourceCode javascript"><code class="sourceCode javascript"><a class="sourceLine" id="cb6-1" title="1"><span class="kw">async</span> <span class="kw">function</span> <span class="at">run</span> ()<span class="op">{</span>        <span class="co">// async wrap</span></a>
+<a class="sourceLine" id="cb6-2" title="2"></a>
+<a class="sourceLine" id="cb6-3" title="3">    <span class="kw">let</span> w <span class="op">=</span> <span class="kw">new</span> <span class="at">Work</span> (data)</a>
+<a class="sourceLine" id="cb6-4" title="4"></a>
+<a class="sourceLine" id="cb6-5" title="5">    <span class="co">//working on Mario</span></a>
+<a class="sourceLine" id="cb6-6" title="6"></a>
+<a class="sourceLine" id="cb6-7" title="7">    <span class="va">w</span>.<span class="at">selectSubset</span>(<span class="dv">0</span>)</a>
+<a class="sourceLine" id="cb6-8" title="8">    <span class="va">w</span>.<span class="at">prepareQuery</span>()</a>
+<a class="sourceLine" id="cb6-9" title="9"></a>
+<a class="sourceLine" id="cb6-10" title="10">    <span class="cf">await</span> <span class="va">w</span>.<span class="at">doRequest</span>()       <span class="co">// wait</span></a>
+<a class="sourceLine" id="cb6-11" title="11"></a>
+<a class="sourceLine" id="cb6-12" title="12">    <span class="va">w</span>.<span class="at">logResult</span>() </a>
+<a class="sourceLine" id="cb6-13" title="13">    <span class="va">w</span>.<span class="at">processResult</span>()</a>
+<a class="sourceLine" id="cb6-14" title="14"></a>
+<a class="sourceLine" id="cb6-15" title="15">    <span class="co">//--------------------</span></a>
+<a class="sourceLine" id="cb6-16" title="16">    <span class="co">// working on Wario</span></a>
+<a class="sourceLine" id="cb6-17" title="17"></a>
+<a class="sourceLine" id="cb6-18" title="18">    <span class="va">w</span>.<span class="at">selectSubset</span>(<span class="dv">1</span>)</a>
+<a class="sourceLine" id="cb6-19" title="19">    <span class="va">w</span>.<span class="at">prepareQuery</span>()</a>
+<a class="sourceLine" id="cb6-20" title="20"></a>
+<a class="sourceLine" id="cb6-21" title="21">    <span class="cf">await</span> <span class="va">w</span>.<span class="at">doRequest</span>()       <span class="co">// wait again</span></a>
+<a class="sourceLine" id="cb6-22" title="22"></a>
+<a class="sourceLine" id="cb6-23" title="23">    <span class="va">w</span>.<span class="at">logResult</span>()</a>
+<a class="sourceLine" id="cb6-24" title="24">    <span class="va">w</span>.<span class="at">processResult</span>()</a>
+<a class="sourceLine" id="cb6-25" title="25"><span class="op">}</span></a>
+<a class="sourceLine" id="cb6-26" title="26"></a>
+<a class="sourceLine" id="cb6-27" title="27"><span class="at">run</span>()</a></code></pre></div>
+<p>Happily yielding:</p>
+<pre class="example"><code>[...] // log for &gt;Mario&lt; same as before
+
+:: Requesting &gt;Wario&lt;
+:: Response for &gt;Wario&lt; arrived:  Evil twin detected! )=D
+:: query result:  Evil twin detected! )=D (from .logResult) // again right in time!
+:: merging query result with data....
+[
+  { user: 'Mario', verdict: &quot;It'seh meeeh, Mario!&quot; },
+  { user: 'Wario', verdict: 'Evil twin detected! )=D' }
+]
+:: Done!
+====================
+</code></pre>
+<p><span id="promise-no-nest"></span></p>
+<h2 id="promise-translation-without-nesting-async-actions">Promise translation without nesting async actions</h2>
+<p>Returning the async-promise in `.then` makes it possible keep the promise chain flat.<a href="#fn1" class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a> Still the result lacks readability.</p>
+<div class="sourceCode" id="cb8" data-org-language="js"><pre class="sourceCode javascript"><code class="sourceCode javascript"><a class="sourceLine" id="cb8-1" title="1"><span class="kw">let</span> w <span class="op">=</span> <span class="kw">new</span> <span class="at">Work</span>(data)<span class="op">;</span></a>
+<a class="sourceLine" id="cb8-2" title="2"></a>
+<a class="sourceLine" id="cb8-3" title="3"><span class="kw">function</span> <span class="at">run</span>(w) <span class="op">{</span></a>
+<a class="sourceLine" id="cb8-4" title="4">  <span class="cf">return</span> <span class="va">Promise</span>.<span class="at">resolve</span>().<span class="at">then</span>(<span class="kw">function</span> () <span class="op">{</span></a>
+<a class="sourceLine" id="cb8-5" title="5">    <span class="co">//working on Mario</span></a>
+<a class="sourceLine" id="cb8-6" title="6">    <span class="va">w</span>.<span class="at">selectSubset</span>(<span class="dv">0</span>)<span class="op">;</span></a>
+<a class="sourceLine" id="cb8-7" title="7">    <span class="va">w</span>.<span class="at">prepareQuery</span>()<span class="op">;</span></a>
+<a class="sourceLine" id="cb8-8" title="8">    <span class="cf">return</span> <span class="va">w</span>.<span class="at">doRequest</span>()<span class="op">;</span></a>
+<a class="sourceLine" id="cb8-9" title="9">  <span class="op">}</span>).<span class="at">then</span>(<span class="kw">function</span> () <span class="op">{</span></a>
+<a class="sourceLine" id="cb8-10" title="10">    <span class="va">w</span>.<span class="at">logResult</span>()<span class="op">;</span></a>
+<a class="sourceLine" id="cb8-11" title="11">    <span class="va">w</span>.<span class="at">processResult</span>()<span class="op">;</span></a>
+<a class="sourceLine" id="cb8-12" title="12"></a>
+<a class="sourceLine" id="cb8-13" title="13">    <span class="co">//--------------------</span></a>
+<a class="sourceLine" id="cb8-14" title="14">    <span class="co">// working on Wario</span></a>
+<a class="sourceLine" id="cb8-15" title="15"></a>
+<a class="sourceLine" id="cb8-16" title="16">    <span class="va">w</span>.<span class="at">selectSubset</span>(<span class="dv">1</span>)<span class="op">;</span></a>
+<a class="sourceLine" id="cb8-17" title="17">    <span class="va">w</span>.<span class="at">prepareQuery</span>()<span class="op">;</span></a>
+<a class="sourceLine" id="cb8-18" title="18">    <span class="cf">return</span> <span class="va">w</span>.<span class="at">doRequest</span>()<span class="op">;</span></a>
+<a class="sourceLine" id="cb8-19" title="19">  <span class="op">}</span>).<span class="at">then</span>(<span class="kw">function</span> () <span class="op">{</span></a>
+<a class="sourceLine" id="cb8-20" title="20">    <span class="va">w</span>.<span class="at">logResult</span>()<span class="op">;</span></a>
+<a class="sourceLine" id="cb8-21" title="21">    <span class="va">w</span>.<span class="at">processResult</span>()<span class="op">;</span></a>
+<a class="sourceLine" id="cb8-22" title="22">  <span class="op">}</span>)<span class="op">;</span></a>
+<a class="sourceLine" id="cb8-23" title="23"><span class="op">}</span></a>
+<a class="sourceLine" id="cb8-24" title="24"></a>
+<a class="sourceLine" id="cb8-25" title="25"><span class="at">run</span>(w)<span class="op">;</span></a></code></pre></div>
+<h2 id="conclusion">Conclusion</h2>
+<p>Using asynchronous methods of objects is quite enjoyable with async/await in EcmaScript 7: Just make sure at the call site of your method to use `await` and run all your code in an async function context, that’s it. The downside of this approach is course that one has to remember, when to use `await`. That’s pretty ok when you’re the only consumer of your class – after all type information can remedy this (Typescript, Bucklescript, Flow etc.). However, if you’re not the only consumer and want the most convenient/fluent API for your users, it’s not enough.</p>
+<p>Related:</p>
+<dl>
+<dt>chaining async api/js</dt>
+<dd><p><a href="http://blog.minimum.se/2017/07/18/fluent-chained-api-asynchronous-functions-async-methods-Javascript.html">http://blog.minimum.se/2017/07/18/fluent-chained-api-asynchronous-functions-async-methods-Javascript.html</a></p>
+<ul>
+<li>easy to consume immutable <a href="https://en.wikipedia.org/wiki/Fluent_interface">fluent</a> async-chain</li>
+</ul>
+</dd>
+<dt>Fluent Interfaces are Evil</dt>
+<dd><p><a href="http://ocramius.github.io/blog/fluent-interfaces-are-evil/">http://ocramius.github.io/blog/fluent-interfaces-are-evil/</a></p>
+<ul>
+<li>returning always `this` makes it harder to reason about behaviour of methods, harder to mock, and to test</li>
+<li>still useful for high level DSLs (frequently used for Query-Builders)</li>
+</ul>
+</dd>
+</dl>
+<h2 id="files">Files</h2>
+<p><a href="https://github.com/salamynder/simple-async-data-pipeline">https://github.com/salamynder/simple-async-data-pipeline</a></p>
+<section class="footnotes" role="doc-endnotes">
+<hr />
+<ol>
+<li id="fn1" role="doc-endnote"><p>See ExploringJS: <a href="https://exploringjs.com/es6/ch_promises.html#_mistake-nesting-promises">Mistake/Nesting Promises.</a><a href="#fnref1" class="footnote-back" role="doc-backlink">↩</a></p></li>
+</ol>
+</section>
+    </div>
+</div>
+]]></description>
+    <pubDate>Sat, 16 Nov 2019 00:00:00 UT</pubDate>
+    <guid>https://salamynder.github.io/2019/11/16/nodejs-simple-data-pipeline-with-async-call/</guid>
+    <dc:creator>René Tobner</dc:creator>
+</item>
+<item>
+    <title></title>
+    <link>https://salamynder.github.io/2014/06/22/Emacs-Orgmode-Latex/</link>
+    <description><![CDATA[<div id="primary">
+    <div class="inside">
+        <h1 class="title">2014-06-22-Emacs-Orgmode-Latex</h1>
+        <div class="opacity08"><small>
+                <i>June 22, 2014 / </i>
+        </small></div>
+        <br>
+        <h1 id="emacs-orgmode-and-latex">Emacs, Orgmode and Latex</h1>
+<p>With Emacs Orgmode you can easily publish your notes (including footnotes, tables, pictures and highlighted source code) to a Latex-pdf, HTML5, a slideshow (reveal.js etc.). Here I document to some steps to setup Orgmode for Latex in Emacs. For installation of Emacs under Windows see: <a href="http://www.claremontmckenna.edu/pages/faculty/alee/emacs/emacs.html">http://www.claremontmckenna.edu/pages/faculty/alee/emacs/emacs.html</a>.</p>
+<h2 id="processing-to-pdf">Processing to PDF</h2>
+<h3 id="bibliographic-support">Bibliographic support</h3>
+<p>If you need bibliography support (BIB-file) you may customize the pdf build process with the variable ›org-latex-pdf-process‹ in your ›.emacs‹ init file:</p>
+<div class="sourceCode" id="cb1" data-org-language="lisp"><pre class="sourceCode commonlisp"><code class="sourceCode commonlisp"><a class="sourceLine" id="cb1-1" title="1">(<span class="kw">setq</span> org-latex-pdf-process</a>
+<a class="sourceLine" id="cb1-2" title="2">      '(<span class="st">&quot;xelatex -shell-escape -interaction nonstopmode -output-directory %o %f&quot;</span></a>
+<a class="sourceLine" id="cb1-3" title="3">        <span class="st">&quot;biber %f&quot;</span></a>
+<a class="sourceLine" id="cb1-4" title="4">        <span class="st">&quot;xelatex -shell-escape -interaction nonstopmode -output-directory %o %f&quot;</span></a>
+<a class="sourceLine" id="cb1-5" title="5">        <span class="st">&quot;xelatex -shell-escape -interaction nonstopmode -output-directory %o %f&quot;</span>))</a></code></pre></div>
+<p>I’m not sure if ›-shell-escape‹ is the recommended way, but it works fine.</p>
+    </div>
+</div>
+]]></description>
+    <pubDate>Sun, 22 Jun 2014 00:00:00 UT</pubDate>
+    <guid>https://salamynder.github.io/2014/06/22/Emacs-Orgmode-Latex/</guid>
+    <dc:creator>René Tobner</dc:creator>
+</item>
+
+    </channel>
+</rss>

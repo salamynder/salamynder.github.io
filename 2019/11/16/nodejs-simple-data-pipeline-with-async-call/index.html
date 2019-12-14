@@ -3,7 +3,7 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>2019-11-16-nodejs-simple-data-pipeline-with-async-call - René Tobner</title>
+        <title>Simple data pipeline with intermediate async call - René Tobner</title>
         <link rel="alternate" type="application/rss+xml" href="/rss.xml" />
         <link rel="stylesheet" type="text/css" href="/css/hemingway.css" />
         <link rel="stylesheet" type="text/css" href="/css/white.css" />
@@ -26,20 +26,19 @@
 
         <div id="primary">
     <div class="inside">
-        <h1 class="title">2019-11-16-nodejs-simple-data-pipeline-with-async-call</h1>
+        <h1 class="title">Simple data pipeline with intermediate async call</h1>
         <div class="opacity08"><small>
                 <i>November 16, 2019 / </i>
         </small></div>
         <br>
-        <h1 id="simple-data-pipeline-with-intermediate-async-call">Simple data pipeline with intermediate async call</h1>
-<h2 id="tldr">tl;dr</h2>
+        <h1 id="tldr">tl;dr</h1>
 <p>Method chaining of async methods in Javascript (non-blocking execution model) is rather involved, either</p>
 <ul>
 <li>you go full circle and wrap everything in `Promise.then` (<a href="http://blog.minimum.se/2017/07/18/fluent-chained-api-asynchronous-functions-async-methods-Javascript.html">minimum.se/fluent-chained-async-api</a>),</li>
 <li>or deal with `.then` at some point in your chain (<a href="https://stackoverflow.com/questions/39028882/chaining-async-method-calls-javascript?noredirect%3D1&amp;lq%3D1">so/chaining-async-method-calls-js</a>)</li>
 </ul>
 <p>On the other hand – without chaining – you may just `await` the async actions inside an `async` function wrapper (<a href="#async-context">async-context</a>).</p>
-<h2 id="javascript-async-methods">Javascript async methods</h2>
+<h1 id="javascript-async-methods">Javascript async methods</h1>
 <p>In order to grasp – a little better – the non-blocking execution model of Javascript in node.js or in the browser, I felt compelled to come up with a small example. When learning asynchronous operations in js, I found a lot material showing short snippets of nested async calls with some processing of the responses. Here is an example in context where:</p>
 <ol>
 <li>some data is fed to an object instance</li>
@@ -141,7 +140,7 @@
 </code></pre>
 <p>… but in the end not overly pleasant because of the `.then`, resulting in one level of indendation every time I do a `.doRequest`.</p>
 <p><span id="async-context"></span></p>
-<h2 id="top-level-async-context">Top-level async context</h2>
+<h1 id="top-level-async-context">Top-level async context</h1>
 <p>So, how do we get both right: a working program and visual appeal by somehow omitting the then-indenting-hell? Turns out that all I needed to do, was to wrap the call site code an async function and `await` the `.doRequest`:</p>
 <div class="sourceCode" id="cb6" data-org-language="js"><pre class="sourceCode javascript"><code class="sourceCode javascript"><a class="sourceLine" id="cb6-1" title="1"><span class="kw">async</span> <span class="kw">function</span> <span class="at">run</span> ()<span class="op">{</span>        <span class="co">// async wrap</span></a>
 <a class="sourceLine" id="cb6-2" title="2"></a>
@@ -185,7 +184,7 @@
 ====================
 </code></pre>
 <p><span id="promise-no-nest"></span></p>
-<h2 id="promise-translation-without-nesting-async-actions">Promise translation without nesting async actions</h2>
+<h1 id="promise-translation-without-nesting-async-actions">Promise translation without nesting async actions</h1>
 <p>Returning the async-promise in `.then` makes it possible keep the promise chain flat.<a href="#fn1" class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a> Still the result lacks readability.</p>
 <div class="sourceCode" id="cb8" data-org-language="js"><pre class="sourceCode javascript"><code class="sourceCode javascript"><a class="sourceLine" id="cb8-1" title="1"><span class="kw">let</span> w <span class="op">=</span> <span class="kw">new</span> <span class="at">Work</span>(data)<span class="op">;</span></a>
 <a class="sourceLine" id="cb8-2" title="2"></a>
@@ -212,7 +211,7 @@
 <a class="sourceLine" id="cb8-23" title="23"><span class="op">}</span></a>
 <a class="sourceLine" id="cb8-24" title="24"></a>
 <a class="sourceLine" id="cb8-25" title="25"><span class="at">run</span>(w)<span class="op">;</span></a></code></pre></div>
-<h2 id="conclusion">Conclusion</h2>
+<h1 id="conclusion">Conclusion</h1>
 <p>Using asynchronous methods of objects is quite enjoyable with async/await in EcmaScript 7: Just make sure at the call site of your method to use `await` and run all your code in an async function context, that’s it. The downside of this approach is course that one has to remember, when to use `await`. That’s pretty ok when you’re the only consumer of your class – after all type information can remedy this (Typescript, Bucklescript, Flow etc.). However, if you’re not the only consumer and want the most convenient/fluent API for your users, it’s not enough.</p>
 <p>Related:</p>
 <dl>
@@ -230,7 +229,7 @@
 </ul>
 </dd>
 </dl>
-<h2 id="files">Files</h2>
+<h1 id="files">Files</h1>
 <p><a href="https://github.com/salamynder/simple-async-data-pipeline">https://github.com/salamynder/simple-async-data-pipeline</a></p>
 <section class="footnotes" role="doc-endnotes">
 <hr />
@@ -288,9 +287,8 @@
                     <div class="widget">
                         <h2>Recent Posts</h2>
                         <ul>
-                            <li><a href="/2019/12/07/js-async-compilation/" title="2019-12-07-js-async-compilation">2019-12-07-js-async-compilation</a></li>
-<li><a href="/2019/11/16/nodejs-simple-data-pipeline-with-async-call/" title="2019-11-16-nodejs-simple-data-pipeline-with-async-call">2019-11-16-nodejs-simple-data-pipeline-with-async-call</a></li>
-<li><a href="/2014/06/22/Emacs-Orgmode-Latex/" title="2014-06-22-Emacs-Orgmode-Latex">2014-06-22-Emacs-Orgmode-Latex</a></li>
+                            <li><a href="/2019/12/07/js-async-compilation/" title="Notes on JS async operations">Notes on JS async operations</a></li>
+<li><a href="/2019/11/16/nodejs-simple-data-pipeline-with-async-call/" title="Simple data pipeline with intermediate async call">Simple data pipeline with intermediate async call</a></li>
 
                         </ul>
                     </div>

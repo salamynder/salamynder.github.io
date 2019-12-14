@@ -9,17 +9,16 @@
                    type="application/rss+xml" />
         <lastBuildDate>Sat, 07 Dec 2019 00:00:00 UT</lastBuildDate>
         <item>
-    <title></title>
+    <title>Notes on JS async operations</title>
     <link>https://salamynder.github.io/2019/12/07/js-async-compilation/</link>
     <description><![CDATA[<div id="primary">
     <div class="inside">
-        <h1 class="title">2019-12-07-js-async-compilation</h1>
+        <h1 class="title">Notes on JS async operations</h1>
         <div class="opacity08"><small>
                 <i>December  7, 2019 / </i>
         </small></div>
         <br>
-        <h1 id="notes-on-js-async-operations">Notes on JS async operations</h1>
-<h2 id="tldr">tl;dr</h2>
+        <h1 id="tldr">tl;dr</h1>
 <p>Async/await works by making a generator check a promis for settlement (settle: Did the promise resolve to a value or reject with an error, yet?). (<a href="#gen-prom-check">gen-prom-check</a>)</p>
 <p>If targeting js-environments without native generator implementation,</p>
 <ul>
@@ -31,16 +30,16 @@
 </ul></li>
 </ul>
 <p>However, async/await can also be transpiled to pure promises via `babel-plugin-async-to-promises`. (<a href="#promise-only">promise-only</a>)</p>
-<h2 id="intro">Intro</h2>
+<h1 id="intro">Intro</h1>
 <p>In languages which block script execution when IO-operations are being done, there is no problem to simply embed these operations in your method chains, like here in PHP where `doRequest` (1) is a method simulating a network request:</p>
-<h2 id="php-blocking">PHP-&gt;blocking</h2>
+<h1 id="php-blocking">PHP-&gt;blocking</h1>
 <div class="sourceCode" id="cb1"><pre class="sourceCode php"><code class="sourceCode php"><a class="sourceLine" id="cb1-1" title="1"><span class="kw">$w</span> = <span class="kw">new</span> Work <span class="ot">(</span><span class="kw">$data</span><span class="ot">);</span></a>
 <a class="sourceLine" id="cb1-2" title="2"><span class="kw">$w</span>-&gt;selectSubset<span class="ot">(</span><span class="dv">0</span><span class="ot">)</span> <span class="co">//working on Mario</span></a>
 <a class="sourceLine" id="cb1-3" title="3">  -&gt;prepareQuery<span class="ot">()</span></a>
 <a class="sourceLine" id="cb1-4" title="4">  -&gt;doRequest<span class="ot">()</span>     <span class="co">// (1) sleeps a bit / blocks until execution is finished</span></a>
 <a class="sourceLine" id="cb1-5" title="5">  -&gt;logResult<span class="ot">()</span>     <span class="co">// next method can be called!</span></a>
 <a class="sourceLine" id="cb1-6" title="6">  -&gt;processResult<span class="ot">();</span></a></code></pre></div>
-<h2 id="js-asyncawait-non-blocking">JS: async/await, non-blocking</h2>
+<h1 id="js-asyncawait-non-blocking">JS: async/await, non-blocking</h1>
 <p>Doing the same in languages which by default do not block on IO, like javascript runtimes, was quite daunting until async/await keywords of ES7 (node v7.6.0) have arrived. (Before that you had to rely on passing callbacks to functions, or registering the callback via `Promise.then()`.) For example, a one-to-one naive translation of the PHP code above results in the following (Spoiler: which is not going to work, because `doRequest` is called without await operator…):</p>
 <div class="sourceCode" id="cb2" data-org-language="js"><pre class="sourceCode javascript"><code class="sourceCode javascript"><a class="sourceLine" id="cb2-1" title="1"><span class="kw">let</span> w <span class="op">=</span> <span class="kw">new</span> <span class="at">Work</span> (data)</a>
 <a class="sourceLine" id="cb2-2" title="2">    .<span class="at">selectSubset</span>(<span class="dv">0</span>)</a>
@@ -141,7 +140,7 @@
 </code></pre>
 <p>As one can see, after making the request (1) node can do some other work, our code seems to be suspended, awaiting the response, until finally (2) the response is logged from `doRequest` and one line later from the `logResult` method and so on. Therefore we have a means to write synchronous looking code, while the efficiency of node’s default asynchronous, non-blocking execution model is preserved.</p>
 <p><span id="gen-prom-check"></span></p>
-<h2 id="generators-and-promises-as-aequivalence-of-asyncawait">Generators and Promises as aequivalence of async/await</h2>
+<h1 id="generators-and-promises-as-aequivalence-of-asyncawait">Generators and Promises as aequivalence of async/await</h1>
 <p>Since babel transpiles async/await code to generators which are specialized to yield promises, as you can see here:</p>
 <ul>
 <li><a href="https://babeljs.io/repl/#?babili%3Dfalse&amp;browsers%3D&amp;build%3D&amp;builtIns%3Dfalse&amp;spec%3Dfalse&amp;loose%3Dfalse&amp;code_lz%3DIYZwngdgxgBAZgV2gFwJYHsIwDboOYBiApslABYAUCATtgJQwDeAUDDMtWE62zFJiGQxqREAAcBRGAF4YwAO7BUQuCXJVadANw82_CCHTYiAOlx4KCpUJHjJJ5EQAeyCnW08AvjyjBSZGAoiamoGFl4-ASNTcwoAclV_eCVjABM4gBoYYNCdNm9PIA&amp;debug%3Dfalse&amp;forceAllTransforms%3Dfalse&amp;shippedProposals%3Dfalse&amp;circleciRepo%3D&amp;evaluate%3Dtrue&amp;fileSize%3Dfalse&amp;timeTravel%3Dfalse&amp;sourceType%3Dmodule&amp;lineWrap%3Dfalse&amp;presets%3Des2017&amp;prettier%3Dfalse&amp;targets%3D&amp;version%3D7.7.4&amp;externalPlugins%3D">async-await-2-gen-promise</a></li>
@@ -154,9 +153,9 @@
 </dd>
 </dl>
 <p>Also, async/await should be internally implemented using generators, as hinted at here: <a href="https://exploringjs.com/es6/ch_generators.html#sec_overview-generators">exploringjs/generators-overview</a> (“ECMAScript 2017 will have async functions which are internally based on generators.”)</p>
-<h3 id="implementation-of-generators-and-asyncawait-in-v8"><span class="todo TODO">TODO</span> Implementation of generators and async/await in V8?</h3>
-<h2 id="generators-semi-coroutines-shallow-coroutines">Generators = semi-coroutines, shallow coroutines</h2>
-<h3 id="coroutines-wikicoroutine">Coroutines? (<a href="https://en.wikipedia.org/wiki/Coroutine">Wiki/Coroutine</a>)</h3>
+<h2 id="implementation-of-generators-and-asyncawait-in-v8"><span class="todo TODO">TODO</span> Implementation of generators and async/await in V8?</h2>
+<h1 id="generators-semi-coroutines-shallow-coroutines">Generators = semi-coroutines, shallow coroutines</h1>
+<h2 id="coroutines-wikicoroutine">Coroutines? (<a href="https://en.wikipedia.org/wiki/Coroutine">Wiki/Coroutine</a>)</h2>
 <ul>
 <li>“allowing execution to be suspended and resumed”
 <ul>
@@ -171,7 +170,7 @@
 <li>= cooperative multitasking: “a style of computer multitasking in which the operating system never initiates a context switch from a running process to another process. Instead, processes voluntarily <strong>yield</strong> control […]” (my emphasis, see <a href="https://en.wikipedia.org/wiki/Cooperative_multitasking">Wiki/CoopMultitasking</a>)</li>
 </ul></li>
 </ul>
-<h3 id="generators-vs.-coroutines-fibers">Generators vs. Coroutines (fibers)</h3>
+<h2 id="generators-vs.-coroutines-fibers">Generators vs. Coroutines (fibers)</h2>
 <p>From <a href="https://github.com/yortus/asyncawait/issues/51">https://github.com/yortus/asyncawait/issues/51</a> (asyncawait is a node.js package using node-fibers; fibers are a system level construct, namely cooperrative threads, which is <strong>equivalent</strong> to the language level construct of coroutines):</p>
 <p>“Fibers and <strong>coroutines</strong> support deep continuations. This means that you can yield at any depth in the call stack and resume there later.”</p>
 <p>Example from the same thread:</p>
@@ -216,7 +215,7 @@
 <dd>“coroutines no, generators yes”
 </dd>
 </dl>
-<h2 id="promise-translation-of-asyncawait-actions">Promise translation of async/await actions</h2>
+<h1 id="promise-translation-of-asyncawait-actions">Promise translation of async/await actions</h1>
 <div class="sourceCode" id="cb10" data-org-language="js"><pre class="sourceCode javascript"><code class="sourceCode javascript"><a class="sourceLine" id="cb10-1" title="1"><span class="kw">let</span> w <span class="op">=</span> <span class="kw">new</span> <span class="at">Work</span>(data)<span class="op">;</span></a>
 <a class="sourceLine" id="cb10-2" title="2"></a>
 <a class="sourceLine" id="cb10-3" title="3"><span class="kw">function</span> <span class="at">run</span>(w) <span class="op">{</span></a>
@@ -257,24 +256,23 @@
     <dc:creator>René Tobner</dc:creator>
 </item>
 <item>
-    <title></title>
+    <title>Simple data pipeline with intermediate async call</title>
     <link>https://salamynder.github.io/2019/11/16/nodejs-simple-data-pipeline-with-async-call/</link>
     <description><![CDATA[<div id="primary">
     <div class="inside">
-        <h1 class="title">2019-11-16-nodejs-simple-data-pipeline-with-async-call</h1>
+        <h1 class="title">Simple data pipeline with intermediate async call</h1>
         <div class="opacity08"><small>
                 <i>November 16, 2019 / </i>
         </small></div>
         <br>
-        <h1 id="simple-data-pipeline-with-intermediate-async-call">Simple data pipeline with intermediate async call</h1>
-<h2 id="tldr">tl;dr</h2>
+        <h1 id="tldr">tl;dr</h1>
 <p>Method chaining of async methods in Javascript (non-blocking execution model) is rather involved, either</p>
 <ul>
 <li>you go full circle and wrap everything in `Promise.then` (<a href="http://blog.minimum.se/2017/07/18/fluent-chained-api-asynchronous-functions-async-methods-Javascript.html">minimum.se/fluent-chained-async-api</a>),</li>
 <li>or deal with `.then` at some point in your chain (<a href="https://stackoverflow.com/questions/39028882/chaining-async-method-calls-javascript?noredirect%3D1&amp;lq%3D1">so/chaining-async-method-calls-js</a>)</li>
 </ul>
 <p>On the other hand – without chaining – you may just `await` the async actions inside an `async` function wrapper (<a href="#async-context">async-context</a>).</p>
-<h2 id="javascript-async-methods">Javascript async methods</h2>
+<h1 id="javascript-async-methods">Javascript async methods</h1>
 <p>In order to grasp – a little better – the non-blocking execution model of Javascript in node.js or in the browser, I felt compelled to come up with a small example. When learning asynchronous operations in js, I found a lot material showing short snippets of nested async calls with some processing of the responses. Here is an example in context where:</p>
 <ol>
 <li>some data is fed to an object instance</li>
@@ -376,7 +374,7 @@
 </code></pre>
 <p>… but in the end not overly pleasant because of the `.then`, resulting in one level of indendation every time I do a `.doRequest`.</p>
 <p><span id="async-context"></span></p>
-<h2 id="top-level-async-context">Top-level async context</h2>
+<h1 id="top-level-async-context">Top-level async context</h1>
 <p>So, how do we get both right: a working program and visual appeal by somehow omitting the then-indenting-hell? Turns out that all I needed to do, was to wrap the call site code an async function and `await` the `.doRequest`:</p>
 <div class="sourceCode" id="cb6" data-org-language="js"><pre class="sourceCode javascript"><code class="sourceCode javascript"><a class="sourceLine" id="cb6-1" title="1"><span class="kw">async</span> <span class="kw">function</span> <span class="at">run</span> ()<span class="op">{</span>        <span class="co">// async wrap</span></a>
 <a class="sourceLine" id="cb6-2" title="2"></a>
@@ -420,7 +418,7 @@
 ====================
 </code></pre>
 <p><span id="promise-no-nest"></span></p>
-<h2 id="promise-translation-without-nesting-async-actions">Promise translation without nesting async actions</h2>
+<h1 id="promise-translation-without-nesting-async-actions">Promise translation without nesting async actions</h1>
 <p>Returning the async-promise in `.then` makes it possible keep the promise chain flat.<a href="#fn1" class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a> Still the result lacks readability.</p>
 <div class="sourceCode" id="cb8" data-org-language="js"><pre class="sourceCode javascript"><code class="sourceCode javascript"><a class="sourceLine" id="cb8-1" title="1"><span class="kw">let</span> w <span class="op">=</span> <span class="kw">new</span> <span class="at">Work</span>(data)<span class="op">;</span></a>
 <a class="sourceLine" id="cb8-2" title="2"></a>
@@ -447,7 +445,7 @@
 <a class="sourceLine" id="cb8-23" title="23"><span class="op">}</span></a>
 <a class="sourceLine" id="cb8-24" title="24"></a>
 <a class="sourceLine" id="cb8-25" title="25"><span class="at">run</span>(w)<span class="op">;</span></a></code></pre></div>
-<h2 id="conclusion">Conclusion</h2>
+<h1 id="conclusion">Conclusion</h1>
 <p>Using asynchronous methods of objects is quite enjoyable with async/await in EcmaScript 7: Just make sure at the call site of your method to use `await` and run all your code in an async function context, that’s it. The downside of this approach is course that one has to remember, when to use `await`. That’s pretty ok when you’re the only consumer of your class – after all type information can remedy this (Typescript, Bucklescript, Flow etc.). However, if you’re not the only consumer and want the most convenient/fluent API for your users, it’s not enough.</p>
 <p>Related:</p>
 <dl>
@@ -465,7 +463,7 @@
 </ul>
 </dd>
 </dl>
-<h2 id="files">Files</h2>
+<h1 id="files">Files</h1>
 <p><a href="https://github.com/salamynder/simple-async-data-pipeline">https://github.com/salamynder/simple-async-data-pipeline</a></p>
 <section class="footnotes" role="doc-endnotes">
 <hr />
@@ -478,34 +476,6 @@
 ]]></description>
     <pubDate>Sat, 16 Nov 2019 00:00:00 UT</pubDate>
     <guid>https://salamynder.github.io/2019/11/16/nodejs-simple-data-pipeline-with-async-call/</guid>
-    <dc:creator>René Tobner</dc:creator>
-</item>
-<item>
-    <title></title>
-    <link>https://salamynder.github.io/2014/06/22/Emacs-Orgmode-Latex/</link>
-    <description><![CDATA[<div id="primary">
-    <div class="inside">
-        <h1 class="title">2014-06-22-Emacs-Orgmode-Latex</h1>
-        <div class="opacity08"><small>
-                <i>June 22, 2014 / </i>
-        </small></div>
-        <br>
-        <h1 id="emacs-orgmode-and-latex">Emacs, Orgmode and Latex</h1>
-<p>With Emacs Orgmode you can easily publish your notes (including footnotes, tables, pictures and highlighted source code) to a Latex-pdf, HTML5, a slideshow (reveal.js etc.). Here I document to some steps to setup Orgmode for Latex in Emacs. For installation of Emacs under Windows see: <a href="http://www.claremontmckenna.edu/pages/faculty/alee/emacs/emacs.html">http://www.claremontmckenna.edu/pages/faculty/alee/emacs/emacs.html</a>.</p>
-<h2 id="processing-to-pdf">Processing to PDF</h2>
-<h3 id="bibliographic-support">Bibliographic support</h3>
-<p>If you need bibliography support (BIB-file) you may customize the pdf build process with the variable ›org-latex-pdf-process‹ in your ›.emacs‹ init file:</p>
-<div class="sourceCode" id="cb1" data-org-language="lisp"><pre class="sourceCode commonlisp"><code class="sourceCode commonlisp"><a class="sourceLine" id="cb1-1" title="1">(<span class="kw">setq</span> org-latex-pdf-process</a>
-<a class="sourceLine" id="cb1-2" title="2">      '(<span class="st">&quot;xelatex -shell-escape -interaction nonstopmode -output-directory %o %f&quot;</span></a>
-<a class="sourceLine" id="cb1-3" title="3">        <span class="st">&quot;biber %f&quot;</span></a>
-<a class="sourceLine" id="cb1-4" title="4">        <span class="st">&quot;xelatex -shell-escape -interaction nonstopmode -output-directory %o %f&quot;</span></a>
-<a class="sourceLine" id="cb1-5" title="5">        <span class="st">&quot;xelatex -shell-escape -interaction nonstopmode -output-directory %o %f&quot;</span>))</a></code></pre></div>
-<p>I’m not sure if ›-shell-escape‹ is the recommended way, but it works fine.</p>
-    </div>
-</div>
-]]></description>
-    <pubDate>Sun, 22 Jun 2014 00:00:00 UT</pubDate>
-    <guid>https://salamynder.github.io/2014/06/22/Emacs-Orgmode-Latex/</guid>
     <dc:creator>René Tobner</dc:creator>
 </item>
 
